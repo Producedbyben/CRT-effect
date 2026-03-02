@@ -157,8 +157,8 @@ class CRTRenderer {
         const blue = this.sampleBilinear(srcData, width, height, bu, v, 2);
 
         const luma = red * 0.2126 + green * 0.7152 + blue * 0.0722;
-        const emissive = Math.max(0, (luma - 6) / 249);
-        if (emissive <= 0) {
+        const isLit = luma > 2.2;
+        if (!isLit) {
           dstData[outIndex] = 0;
           dstData[outIndex + 1] = 0;
           dstData[outIndex + 2] = 0;
@@ -175,20 +175,24 @@ class CRTRenderer {
           return Math.exp(-((dx * dx) / (2 * sigmaX * sigmaX) + (cellY * cellY) / (2 * sigmaY * sigmaY)));
         };
 
-        const baseGap = 0.015;
-        const rMask = baseGap + (0.32 + mask * 1.05) * spot(0.5);
-        const gMask = baseGap + (0.32 + mask * 1.05) * spot(1.5);
-        const bMask = baseGap + (0.32 + mask * 1.05) * spot(2.5);
+        const baseGap = 0.03;
+        const maskAmp = 0.42 + mask * 1.05;
+        const rMask = baseGap + maskAmp * spot(0.5);
+        const gMask = baseGap + maskAmp * spot(1.5);
+        const bMask = baseGap + maskAmp * spot(2.5);
 
         const localFlutter = 1 + params.flicker * 0.1 * (seededNoise(x * 0.7, y * 1.3, frameIndex) - 0.5);
         const temporalGain = scanlineGain * retraceGain * globalRefresh * localFlutter;
 
-        const grain = (seededNoise(x * 1.9, y * 1.4 + frameSeconds * 60, frameIndex) - 0.5) * 65 * params.noise;
-        const gate = Math.min(1, emissive * 1.35);
+        const grain = (seededNoise(x * 1.9, y * 1.4 + frameSeconds * 60, frameIndex) - 0.5) * 55 * params.noise;
 
-        dstData[outIndex] = Math.min(255, Math.max(0, red * rMask * temporalGain + grain * gate));
-        dstData[outIndex + 1] = Math.min(255, Math.max(0, green * gMask * temporalGain + grain * gate));
-        dstData[outIndex + 2] = Math.min(255, Math.max(0, blue * bMask * temporalGain + grain * gate));
+        const energyNorm = 1 / (baseGap + maskAmp * 0.55);
+        const brighten = 1.22 + params.bloom * 0.18;
+        const litGain = temporalGain * energyNorm * brighten;
+
+        dstData[outIndex] = Math.min(255, Math.max(0, red * rMask * litGain + grain));
+        dstData[outIndex + 1] = Math.min(255, Math.max(0, green * gMask * litGain + grain));
+        dstData[outIndex + 2] = Math.min(255, Math.max(0, blue * bMask * litGain + grain));
         dstData[outIndex + 3] = 255;
       }
     }
