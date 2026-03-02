@@ -21,11 +21,33 @@ const controlIds = [
   "noise",
 ];
 
-for (const name of Object.keys(PRESETS)) {
-  const opt = document.createElement("option");
-  opt.value = name;
-  opt.textContent = name;
-  presetSelect.appendChild(opt);
+let hasLoadedImage = false;
+
+function setExportAvailability() {
+  exportBtn.disabled = !hasLoadedImage;
+}
+
+function initializePresets() {
+  const names = Object.keys(PRESETS);
+  if (names.length === 0) {
+    const opt = document.createElement("option");
+    opt.textContent = "No presets available";
+    opt.disabled = true;
+    opt.selected = true;
+    presetSelect.appendChild(opt);
+    return;
+  }
+
+  for (const name of names) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    presetSelect.appendChild(opt);
+  }
+
+  const defaultPreset = PRESETS["Consumer TV"] ? "Consumer TV" : names[0];
+  presetSelect.value = defaultPreset;
+  applyPreset(defaultPreset);
 }
 
 function readParams() {
@@ -36,13 +58,29 @@ function applyPreset(name) {
   const values = PRESETS[name];
   if (!values) return;
   for (const id of controlIds) {
-    document.getElementById(id).value = values[id];
+    if (typeof values[id] === "number") {
+      document.getElementById(id).value = values[id];
+    }
   }
 }
 
+async function loadImageFromFile(file) {
+  if ("createImageBitmap" in window) {
+    return createImageBitmap(file);
+  }
+
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+  try {
+    await img.decode();
+  } finally {
+    URL.revokeObjectURL(img.src);
+  }
+  return img;
+}
+
 presetSelect.addEventListener("change", () => applyPreset(presetSelect.value));
-presetSelect.value = "Consumer TV";
-applyPreset("Consumer TV");
+initializePresets();
 
 const fpsInput = document.getElementById("fps");
 const durationInput = document.getElementById("duration");
@@ -61,12 +99,22 @@ const imageInput = document.getElementById("imageInput");
 imageInput.addEventListener("change", async () => {
   const file = imageInput.files?.[0];
   if (!file) return;
-  const img = new Image();
-  img.src = URL.createObjectURL(file);
-  await img.decode();
-  renderer.setImage(img);
-  start = performance.now();
-  statusEl.textContent = `Loaded ${file.name}`;
+
+  statusEl.textContent = `Loading ${file.name}...`;
+  try {
+    const imageSource = await loadImageFromFile(file);
+    renderer.setImage(imageSource);
+    if (typeof imageSource.close === "function") imageSource.close();
+    hasLoadedImage = true;
+    setExportAvailability();
+    start = performance.now();
+    statusEl.textContent = `Loaded ${file.name}`;
+  } catch (error) {
+    hasLoadedImage = false;
+    setExportAvailability();
+    statusEl.textContent = `Couldn't load image: ${error.message}`;
+    console.error(error);
+  }
 });
 
 for (const id of [...controlIds, "fps", "duration"]) {
@@ -76,6 +124,11 @@ for (const id of [...controlIds, "fps", "duration"]) {
 }
 
 exportBtn.addEventListener("click", async () => {
+  if (!hasLoadedImage) {
+    statusEl.textContent = "Load an image before exporting.";
+    return;
+  }
+
   try {
     exportBtn.disabled = true;
     progressEl.value = 0;
@@ -96,6 +149,8 @@ exportBtn.addEventListener("click", async () => {
     statusEl.textContent = `Export failed: ${error.message}`;
     console.error(error);
   } finally {
-    exportBtn.disabled = false;
+    setExportAvailability();
   }
 });
+
+setExportAvailability();
