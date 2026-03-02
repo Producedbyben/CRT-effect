@@ -114,6 +114,7 @@ function applyPreset(name) {
       document.getElementById(id).value = values[id];
     }
   }
+  return img;
 }
 
 async function loadImageFromFile(file) {
