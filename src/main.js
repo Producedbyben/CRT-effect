@@ -1,6 +1,35 @@
 import { CRTRenderer } from "./crt-renderer.js";
 import { exportMp4 } from "./exporter.js";
-import { PRESETS } from "./presets.js";
+
+const FALLBACK_PRESETS = {
+  "Consumer TV": {
+    scanlineStrength: 0.45,
+    phosphorMask: 0.36,
+    barrelDistortion: 0.28,
+    bloom: 0.45,
+    flicker: 0.1,
+    chromaticAberration: 0.3,
+    noise: 0.2,
+  },
+  "PVM/BVM": {
+    scanlineStrength: 0.25,
+    phosphorMask: 0.6,
+    barrelDistortion: 0.08,
+    bloom: 0.2,
+    flicker: 0.04,
+    chromaticAberration: 0.08,
+    noise: 0.07,
+  },
+  Arcade: {
+    scanlineStrength: 0.4,
+    phosphorMask: 0.45,
+    barrelDistortion: 0.22,
+    bloom: 0.55,
+    flicker: 0.08,
+    chromaticAberration: 0.2,
+    noise: 0.12,
+  },
+};
 
 const renderer = new CRTRenderer();
 const canvas = document.getElementById("previewCanvas");
@@ -21,11 +50,56 @@ const controlIds = [
   "noise",
 ];
 
-for (const name of Object.keys(PRESETS)) {
-  const opt = document.createElement("option");
-  opt.value = name;
-  opt.textContent = name;
-  presetSelect.appendChild(opt);
+let hasLoadedImage = false;
+let presets = { ...FALLBACK_PRESETS };
+
+function setStatus(message, mode = "info") {
+  statusEl.textContent = message;
+  statusEl.dataset.mode = mode;
+}
+
+function setExportAvailability() {
+  exportBtn.disabled = !hasLoadedImage;
+}
+
+async function loadPresets() {
+  try {
+    const module = await import("./presets.js");
+    if (module?.PRESETS && Object.keys(module.PRESETS).length > 0) {
+      presets = module.PRESETS;
+      setStatus("Presets loaded successfully.", "success");
+      return;
+    }
+    setStatus("Preset file loaded but empty. Using built-in presets.", "warn");
+  } catch (error) {
+    setStatus("Could not load presets.js. Using built-in presets.", "warn");
+    console.warn("Preset loading failed", error);
+  }
+}
+
+function initializePresets() {
+  const names = Object.keys(presets);
+  presetSelect.innerHTML = "";
+
+  if (names.length === 0) {
+    const opt = document.createElement("option");
+    opt.textContent = "No presets available";
+    opt.disabled = true;
+    opt.selected = true;
+    presetSelect.appendChild(opt);
+    return;
+  }
+
+  for (const name of names) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    presetSelect.appendChild(opt);
+  }
+
+  const defaultPreset = presets["Consumer TV"] ? "Consumer TV" : names[0];
+  presetSelect.value = defaultPreset;
+  applyPreset(defaultPreset);
 }
 
 function readParams() {
@@ -33,16 +107,40 @@ function readParams() {
 }
 
 function applyPreset(name) {
-  const values = PRESETS[name];
+  const values = presets[name];
   if (!values) return;
   for (const id of controlIds) {
-    document.getElementById(id).value = values[id];
+    if (typeof values[id] === "number") {
+      document.getElementById(id).value = values[id];
+    }
   }
 }
 
-presetSelect.addEventListener("change", () => applyPreset(presetSelect.value));
-presetSelect.value = "Consumer TV";
-applyPreset("Consumer TV");
+async function loadImageFromFile(file) {
+  if ("createImageBitmap" in window) {
+    try {
+      return await createImageBitmap(file);
+    } catch (error) {
+      console.warn("createImageBitmap failed; falling back to Image.decode", error);
+    }
+  }
+
+  const img = new Image();
+  const objectUrl = URL.createObjectURL(file);
+  img.src = objectUrl;
+  try {
+    await img.decode();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+  return img;
+}
+
+presetSelect.addEventListener("change", () => {
+  applyPreset(presetSelect.value);
+  progressEl.value = 0;
+  setStatus(`Preset applied: ${presetSelect.value}`, "success");
+});
 
 const fpsInput = document.getElementById("fps");
 const durationInput = document.getElementById("duration");
@@ -61,12 +159,27 @@ const imageInput = document.getElementById("imageInput");
 imageInput.addEventListener("change", async () => {
   const file = imageInput.files?.[0];
   if (!file) return;
-  const img = new Image();
-  img.src = URL.createObjectURL(file);
-  await img.decode();
-  renderer.setImage(img);
-  start = performance.now();
-  statusEl.textContent = `Loaded ${file.name}`;
+
+  progressEl.value = 0.05;
+  setStatus(`Processing ${file.name} (${Math.round(file.size / 1024)} KB)...`, "info");
+
+  try {
+    const imageSource = await loadImageFromFile(file);
+    progressEl.value = 0.4;
+    renderer.setImage(imageSource);
+    if (typeof imageSource.close === "function") imageSource.close();
+    progressEl.value = 1;
+    hasLoadedImage = true;
+    setExportAvailability();
+    start = performance.now();
+    setStatus(`Loaded ${file.name}. Ready to export.`, "success");
+  } catch (error) {
+    hasLoadedImage = false;
+    progressEl.value = 0;
+    setExportAvailability();
+    setStatus(`Couldn't load image: ${error.message}`, "error");
+    console.error(error);
+  }
 });
 
 for (const id of [...controlIds, "fps", "duration"]) {
@@ -76,10 +189,15 @@ for (const id of [...controlIds, "fps", "duration"]) {
 }
 
 exportBtn.addEventListener("click", async () => {
+  if (!hasLoadedImage) {
+    setStatus("Load an image before exporting.", "warn");
+    return;
+  }
+
   try {
     exportBtn.disabled = true;
     progressEl.value = 0;
-    statusEl.textContent = "Preparing export...";
+    setStatus("Preparing export...", "info");
     await exportMp4({
       canvas,
       renderer,
@@ -88,14 +206,24 @@ exportBtn.addEventListener("click", async () => {
       duration: Math.max(0.5, Number(durationInput.value) || 4),
       onProgress: (value, current, total) => {
         progressEl.value = value;
-        statusEl.textContent = `Encoding frame ${current}/${total}`;
+        setStatus(`Encoding frame ${current}/${total}`, "info");
       },
     });
-    statusEl.textContent = "Export finished. Download should begin automatically.";
+    setStatus("Export finished. Download should begin automatically.", "success");
   } catch (error) {
-    statusEl.textContent = `Export failed: ${error.message}`;
+    setStatus(`Export failed: ${error.message}`, "error");
     console.error(error);
   } finally {
-    exportBtn.disabled = false;
+    setExportAvailability();
   }
 });
+
+(async function init() {
+  setExportAvailability();
+  setStatus("Starting renderer and loading presets...", "info");
+  await loadPresets();
+  initializePresets();
+  if (!hasLoadedImage) {
+    setStatus("Load an image to begin.", "info");
+  }
+})();

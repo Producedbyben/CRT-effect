@@ -13,8 +13,8 @@ export class CRTRenderer {
   }
 
   setImage(img) {
-    this.sourceCanvas.width = img.naturalWidth || img.width;
-    this.sourceCanvas.height = img.naturalHeight || img.height;
+    this.sourceCanvas.width = img.naturalWidth || img.videoWidth || img.width;
+    this.sourceCanvas.height = img.naturalHeight || img.videoHeight || img.height;
     const ctx = this.sourceCanvas.getContext("2d");
     ctx.clearRect(0, 0, this.sourceCanvas.width, this.sourceCanvas.height);
     ctx.drawImage(img, 0, 0);
