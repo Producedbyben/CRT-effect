@@ -77,3 +77,9 @@ progress {
   font-size: 0.85rem;
   color: #b5d3ff;
 }
+
+
+.status[data-mode="success"] { color: #8ce99a; }
+.status[data-mode="warn"] { color: #ffd879; }
+.status[data-mode="error"] { color: #ff9a9a; }
+.status[data-mode="info"] { color: #b5d3ff; }
