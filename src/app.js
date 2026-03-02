@@ -38,9 +38,8 @@ function seededNoise(x, y, frame) {
 class CRTRenderer {
   constructor() {
     this.sourceCanvas = document.createElement("canvas");
+    this.fitCanvas = document.createElement("canvas");
     this.workCanvas = document.createElement("canvas");
-    this.maskCanvas = document.createElement("canvas");
-    this.maskPattern = null;
     this.hasImage = false;
   }
 
@@ -53,19 +52,24 @@ class CRTRenderer {
     this.hasImage = true;
   }
 
-  ensureMaskPattern(ctx, strength) {
-    this.maskCanvas.width = 3;
-    this.maskCanvas.height = 1;
-    const mctx = this.maskCanvas.getContext("2d");
-    const alpha = Math.min(0.6, strength * 0.8);
-    mctx.clearRect(0, 0, 3, 1);
-    mctx.fillStyle = `rgba(255, 80, 80, ${alpha})`;
-    mctx.fillRect(0, 0, 1, 1);
-    mctx.fillStyle = `rgba(80, 255, 80, ${alpha})`;
-    mctx.fillRect(1, 0, 1, 1);
-    mctx.fillStyle = `rgba(80, 150, 255, ${alpha})`;
-    mctx.fillRect(2, 0, 1, 1);
-    this.maskPattern = ctx.createPattern(this.maskCanvas, "repeat");
+  sampleBilinear(data, width, height, u, v, channel) {
+    const x = Math.max(0, Math.min(width - 1, u * (width - 1)));
+    const y = Math.max(0, Math.min(height - 1, v * (height - 1)));
+    const x0 = Math.floor(x);
+    const x1 = Math.min(width - 1, x0 + 1);
+    const y0 = Math.floor(y);
+    const y1 = Math.min(height - 1, y0 + 1);
+    const tx = x - x0;
+    const ty = y - y0;
+
+    const i00 = (y0 * width + x0) * 4 + channel;
+    const i10 = (y0 * width + x1) * 4 + channel;
+    const i01 = (y1 * width + x0) * 4 + channel;
+    const i11 = (y1 * width + x1) * 4 + channel;
+
+    const a = data[i00] * (1 - tx) + data[i10] * tx;
+    const b = data[i01] * (1 - tx) + data[i11] * tx;
+    return a * (1 - ty) + b * ty;
   }
 
   render(outCtx, width, height, seconds, params, frameIndex, fps) {
@@ -74,10 +78,12 @@ class CRTRenderer {
     outCtx.fillRect(0, 0, width, height);
     if (!this.hasImage) return;
 
-    this.workCanvas.width = width;
-    this.workCanvas.height = height;
-    const wctx = this.workCanvas.getContext("2d", { willReadFrequently: true });
-    wctx.clearRect(0, 0, width, height);
+    this.fitCanvas.width = width;
+    this.fitCanvas.height = height;
+    const fitCtx = this.fitCanvas.getContext("2d", { willReadFrequently: true });
+    fitCtx.clearRect(0, 0, width, height);
+    fitCtx.imageSmoothingEnabled = true;
+    fitCtx.imageSmoothingQuality = "high";
 
     const src = this.sourceCanvas;
     const srcAspect = src.width / src.height;
@@ -95,49 +101,94 @@ class CRTRenderer {
       sy = (src.height - sh) / 2;
     }
 
+    fitCtx.drawImage(src, sx, sy, sw, sh, 0, 0, width, height);
+
+    this.workCanvas.width = width;
+    this.workCanvas.height = height;
+    const wctx = this.workCanvas.getContext("2d", { willReadFrequently: true });
+    const srcPixels = fitCtx.getImageData(0, 0, width, height);
+    const outPixels = wctx.createImageData(width, height);
+    const srcData = srcPixels.data;
+    const dstData = outPixels.data;
+
     const barrel = params.barrelDistortion;
+    const ca = params.chromaticAberration;
+    const scan = params.scanlineStrength;
+    const mask = params.phosphorMask;
+
     for (let y = 0; y < height; y++) {
       const ny = (y / (height - 1)) * 2 - 1;
-      const curve = 1 + barrel * ny * ny;
-      const lineW = width / curve;
-      const dx = (width - lineW) / 2;
-      const srcY = sy + (y / height) * sh;
-      wctx.drawImage(src, sx, srcY, sw, sh / height, dx, y, lineW, 1);
+      const scanPhase = Math.sin((y + 0.5) * Math.PI);
+      const scanlineGain = 1 - scan * (0.35 + 0.65 * (0.5 + 0.5 * scanPhase));
+
+      for (let x = 0; x < width; x++) {
+        const nx = (x / (width - 1)) * 2 - 1;
+        const r2 = nx * nx + ny * ny;
+        const warp = 1 + barrel * (0.28 + 0.72 * r2);
+        const srcNx = nx / warp;
+        const srcNy = ny / warp;
+        const u = srcNx * 0.5 + 0.5;
+        const v = srcNy * 0.5 + 0.5;
+
+        const outIndex = (y * width + x) * 4;
+        if (u < 0 || u > 1 || v < 0 || v > 1) {
+          dstData[outIndex] = 0;
+          dstData[outIndex + 1] = 0;
+          dstData[outIndex + 2] = 0;
+          dstData[outIndex + 3] = 255;
+          continue;
+        }
+
+        const edgeShift = ca * (0.0012 + r2 * 0.0045);
+        const ru = u + edgeShift * (0.7 + Math.abs(nx));
+        const gu = u;
+        const bu = u - edgeShift * (0.7 + Math.abs(nx));
+
+        const red = this.sampleBilinear(srcData, width, height, ru, v, 0);
+        const green = this.sampleBilinear(srcData, width, height, gu, v, 1);
+        const blue = this.sampleBilinear(srcData, width, height, bu, v, 2);
+
+        const triad = x % 3;
+        const boost = 1 + mask * 0.52;
+        const dim = 1 - mask * 0.32;
+        const rMask = triad === 0 ? boost : dim;
+        const gMask = triad === 1 ? boost : dim;
+        const bMask = triad === 2 ? boost : dim;
+
+        dstData[outIndex] = Math.min(255, red * scanlineGain * rMask);
+        dstData[outIndex + 1] = Math.min(255, green * scanlineGain * gMask);
+        dstData[outIndex + 2] = Math.min(255, blue * scanlineGain * bMask);
+        dstData[outIndex + 3] = 255;
+      }
     }
 
-    if (params.chromaticAberration > 0) {
-      const shift = 1 + params.chromaticAberration * 4;
-      wctx.globalCompositeOperation = "screen";
-      wctx.globalAlpha = params.chromaticAberration * 0.55;
-      wctx.filter = "sepia(1) saturate(6) hue-rotate(-35deg)";
-      wctx.drawImage(this.workCanvas, shift, 0);
-      wctx.filter = "sepia(1) saturate(6) hue-rotate(180deg)";
-      wctx.drawImage(this.workCanvas, -shift, 0);
-      wctx.filter = "none";
-      wctx.globalCompositeOperation = "source-over";
-      wctx.globalAlpha = 1;
-    }
-
+    wctx.putImageData(outPixels, 0, 0);
+    outCtx.imageSmoothingEnabled = true;
+    outCtx.imageSmoothingQuality = "high";
     outCtx.drawImage(this.workCanvas, 0, 0);
-
-    const scan = params.scanlineStrength;
-    outCtx.fillStyle = `rgba(0,0,0,${0.06 + scan * 0.5})`;
-    for (let y = 0; y < height; y += 2) outCtx.fillRect(0, y, width, 1);
-
-    this.ensureMaskPattern(outCtx, params.phosphorMask);
-    outCtx.globalAlpha = params.phosphorMask;
-    outCtx.fillStyle = this.maskPattern;
-    outCtx.fillRect(0, 0, width, height);
-    outCtx.globalAlpha = 1;
 
     const bloom = params.bloom;
     if (bloom > 0) {
       outCtx.save();
-      outCtx.globalAlpha = bloom * 0.5;
-      outCtx.filter = `blur(${1 + bloom * 6}px) brightness(${1 + bloom * 0.45})`;
+      outCtx.globalAlpha = bloom * 0.38;
+      outCtx.filter = `blur(${1 + bloom * 7}px) brightness(${1 + bloom * 0.35})`;
       outCtx.drawImage(outCtx.canvas, 0, 0);
       outCtx.restore();
     }
+
+    const vignette = Math.min(0.35, 0.08 + barrel * 0.22);
+    const grad = outCtx.createRadialGradient(
+      width * 0.5,
+      height * 0.5,
+      Math.min(width, height) * 0.22,
+      width * 0.5,
+      height * 0.5,
+      Math.max(width, height) * 0.6,
+    );
+    grad.addColorStop(0, "rgba(0,0,0,0)");
+    grad.addColorStop(1, `rgba(0,0,0,${vignette.toFixed(3)})`);
+    outCtx.fillStyle = grad;
+    outCtx.fillRect(0, 0, width, height);
 
     const flickerWave = Math.sin((frameIndex / fps) * Math.PI * 2 * 2.1) * 0.5 + 0.5;
     const flicker = params.flicker * (0.35 + flickerWave * 0.65);
