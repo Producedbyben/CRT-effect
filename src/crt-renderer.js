@@ -7,8 +7,6 @@ export class CRTRenderer {
   constructor() {
     this.sourceCanvas = document.createElement("canvas");
     this.workCanvas = document.createElement("canvas");
-    this.maskCanvas = document.createElement("canvas");
-    this.maskPattern = null;
     this.hasImage = false;
   }
 
@@ -19,21 +17,6 @@ export class CRTRenderer {
     ctx.clearRect(0, 0, this.sourceCanvas.width, this.sourceCanvas.height);
     ctx.drawImage(img, 0, 0);
     this.hasImage = true;
-  }
-
-  ensureMaskPattern(ctx, strength) {
-    this.maskCanvas.width = 3;
-    this.maskCanvas.height = 1;
-    const mctx = this.maskCanvas.getContext("2d");
-    const alpha = Math.min(0.6, strength * 0.8);
-    mctx.clearRect(0, 0, 3, 1);
-    mctx.fillStyle = `rgba(255, 80, 80, ${alpha})`;
-    mctx.fillRect(0, 0, 1, 1);
-    mctx.fillStyle = `rgba(80, 255, 80, ${alpha})`;
-    mctx.fillRect(1, 0, 1, 1);
-    mctx.fillStyle = `rgba(80, 150, 255, ${alpha})`;
-    mctx.fillRect(2, 0, 1, 1);
-    this.maskPattern = ctx.createPattern(this.maskCanvas, "repeat");
   }
 
   render(outCtx, width, height, seconds, params, frameIndex, fps) {
@@ -86,41 +69,65 @@ export class CRTRenderer {
       wctx.globalAlpha = 1;
     }
 
-    outCtx.drawImage(this.workCanvas, 0, 0);
+    const pixels = wctx.getImageData(0, 0, width, height);
+    const data = pixels.data;
 
     const scan = params.scanlineStrength;
-    outCtx.fillStyle = `rgba(0,0,0,${0.06 + scan * 0.5})`;
-    for (let y = 0; y < height; y += 2) outCtx.fillRect(0, y, width, 1);
+    const maskStrength = params.phosphorMask;
+    const flickerWave = Math.sin((frameIndex / fps) * Math.PI * 2 * 2.1) * 0.5 + 0.5;
+    const flicker = params.flicker * (0.35 + flickerWave * 0.65);
 
-    this.ensureMaskPattern(outCtx, params.phosphorMask);
-    outCtx.globalAlpha = params.phosphorMask;
-    outCtx.fillStyle = this.maskPattern;
-    outCtx.fillRect(0, 0, width, height);
-    outCtx.globalAlpha = 1;
+    for (let y = 0; y < height; y++) {
+      const scanGain = 1 - scan * (y % 2 === 0 ? 0.62 : 0.2);
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        let r = data[i];
+        let g = data[i + 1];
+        let b = data[i + 2];
+
+        const luma = r * 0.2126 + g * 0.7152 + b * 0.0722;
+        if (luma <= 2.2) {
+          data[i] = 0;
+          data[i + 1] = 0;
+          data[i + 2] = 0;
+          data[i + 3] = 255;
+          continue;
+        }
+
+        const column = x % 3;
+        const channelBoost = 1 + maskStrength * 0.9;
+        const channelBase = 1 - maskStrength * 0.2;
+        const rMask = column === 0 ? channelBoost : channelBase;
+        const gMask = column === 1 ? channelBoost : channelBase;
+        const bMask = column === 2 ? channelBoost : channelBase;
+
+        const brightnessLift = 1.14 + params.bloom * 0.22;
+        const noise = (seededNoise(x * 2, y * 1.7 + seconds * 60, frameIndex) - 0.5) * 36 * params.noise;
+        const flickerGain = 1 + flicker * 0.32;
+
+        r = r * scanGain * rMask * brightnessLift * flickerGain + noise;
+        g = g * scanGain * gMask * brightnessLift * flickerGain + noise;
+        b = b * scanGain * bMask * brightnessLift * flickerGain + noise;
+
+        data[i] = Math.min(255, Math.max(0, r));
+        data[i + 1] = Math.min(255, Math.max(0, g));
+        data[i + 2] = Math.min(255, Math.max(0, b));
+        data[i + 3] = 255;
+      }
+    }
+
+    wctx.putImageData(pixels, 0, 0);
+
+    outCtx.drawImage(this.workCanvas, 0, 0);
 
     const bloom = params.bloom;
     if (bloom > 0) {
       outCtx.save();
-      outCtx.globalAlpha = bloom * 0.5;
-      outCtx.filter = `blur(${1 + bloom * 6}px) brightness(${1 + bloom * 0.45})`;
-      outCtx.drawImage(outCtx.canvas, 0, 0);
+      outCtx.globalCompositeOperation = "screen";
+      outCtx.globalAlpha = bloom * 0.42;
+      outCtx.filter = `blur(${1 + bloom * 5}px)`;
+      outCtx.drawImage(this.workCanvas, 0, 0);
       outCtx.restore();
-    }
-
-    const flickerWave = Math.sin((frameIndex / fps) * Math.PI * 2 * 2.1) * 0.5 + 0.5;
-    const flicker = params.flicker * (0.35 + flickerWave * 0.65);
-    outCtx.fillStyle = `rgba(255,255,255,${flicker * 0.12})`;
-    outCtx.fillRect(0, 0, width, height);
-
-    if (params.noise > 0) {
-      const count = Math.floor(width * height * 0.003 * params.noise);
-      for (let i = 0; i < count; i++) {
-        const x = Math.floor(seededNoise(i, seconds, frameIndex) * width);
-        const y = Math.floor(seededNoise(i * 2, seconds + 3.1, frameIndex) * height);
-        const a = seededNoise(x, y, frameIndex) * 0.2 * params.noise;
-        outCtx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
-        outCtx.fillRect(x, y, 1, 1);
-      }
     }
   }
 }
