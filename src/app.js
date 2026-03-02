@@ -2,29 +2,29 @@ const FALLBACK_PRESETS = {
   "Consumer TV": {
     scanlineStrength: 0.45,
     phosphorMask: 0.36,
-    barrelDistortion: 0.28,
+    barrelDistortion: 0.04,
     bloom: 0.45,
-    flicker: 0.1,
+    flicker: 0.26,
     chromaticAberration: 0.3,
-    noise: 0.2,
+    noise: 0.34,
   },
   "PVM/BVM": {
     scanlineStrength: 0.25,
     phosphorMask: 0.6,
     barrelDistortion: 0.08,
     bloom: 0.2,
-    flicker: 0.04,
+    flicker: 0.12,
     chromaticAberration: 0.08,
-    noise: 0.07,
+    noise: 0.16,
   },
   Arcade: {
     scanlineStrength: 0.4,
     phosphorMask: 0.45,
-    barrelDistortion: 0.22,
+    barrelDistortion: 0.12,
     bloom: 0.55,
-    flicker: 0.08,
+    flicker: 0.2,
     chromaticAberration: 0.2,
-    noise: 0.12,
+    noise: 0.3,
   },
 };
 
@@ -190,19 +190,47 @@ class CRTRenderer {
     outCtx.fillStyle = grad;
     outCtx.fillRect(0, 0, width, height);
 
-    const flickerWave = Math.sin((frameIndex / fps) * Math.PI * 2 * 2.1) * 0.5 + 0.5;
-    const flicker = params.flicker * (0.35 + flickerWave * 0.65);
-    outCtx.fillStyle = `rgba(255,255,255,${flicker * 0.12})`;
+    const frameSeconds = frameIndex / fps;
+    const flickerWaveA = Math.sin(frameSeconds * Math.PI * 2 * 1.94) * 0.5 + 0.5;
+    const flickerWaveB = Math.sin(frameSeconds * Math.PI * 2 * 0.61 + 1.7) * 0.5 + 0.5;
+    const flicker = params.flicker * (0.4 + 0.6 * (0.65 * flickerWaveA + 0.35 * flickerWaveB));
+    outCtx.fillStyle = `rgba(255,255,255,${(flicker * 0.2).toFixed(3)})`;
     outCtx.fillRect(0, 0, width, height);
 
+    const retraceY = ((frameSeconds * 1.45) % 1) * height;
+    const retraceBand = Math.max(6, Math.floor(height * 0.02));
+    const retraceGrad = outCtx.createLinearGradient(0, retraceY - retraceBand, 0, retraceY + retraceBand);
+    retraceGrad.addColorStop(0, "rgba(255,255,255,0)");
+    retraceGrad.addColorStop(0.5, `rgba(255,255,255,${(params.flicker * 0.12).toFixed(3)})`);
+    retraceGrad.addColorStop(1, "rgba(255,255,255,0)");
+    outCtx.fillStyle = retraceGrad;
+    outCtx.fillRect(0, retraceY - retraceBand, width, retraceBand * 2);
+
+    const jitterPx = params.flicker * (seededNoise(frameIndex, frameSeconds, 17) - 0.5) * 2.6;
+    if (Math.abs(jitterPx) > 0.01) {
+      outCtx.save();
+      outCtx.globalAlpha = Math.min(0.14, 0.05 + params.flicker * 0.12);
+      outCtx.drawImage(outCtx.canvas, jitterPx, 0);
+      outCtx.restore();
+    }
+
     if (params.noise > 0) {
-      const count = Math.floor(width * height * 0.003 * params.noise);
+      const count = Math.floor(width * height * 0.008 * params.noise);
       for (let i = 0; i < count; i++) {
         const x = Math.floor(seededNoise(i, seconds, frameIndex) * width);
         const y = Math.floor(seededNoise(i * 2, seconds + 3.1, frameIndex) * height);
-        const a = seededNoise(x, y, frameIndex) * 0.2 * params.noise;
+        const grain = seededNoise(x + frameIndex * 0.3, y, frameIndex);
+        const a = (0.02 + grain * 0.28) * params.noise;
         outCtx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
         outCtx.fillRect(x, y, 1, 1);
+      }
+
+      const burst = seededNoise(frameIndex, frameSeconds * 10, 91);
+      if (burst > 0.91) {
+        const bandY = Math.floor(seededNoise(frameIndex, burst, 37) * height);
+        const bandH = Math.max(3, Math.floor(height * 0.012));
+        outCtx.fillStyle = `rgba(255,255,255,${(params.noise * 0.22).toFixed(3)})`;
+        outCtx.fillRect(0, bandY, width, bandH);
       }
     }
   }
