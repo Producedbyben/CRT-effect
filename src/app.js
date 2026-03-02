@@ -115,11 +115,19 @@ class CRTRenderer {
     const ca = params.chromaticAberration;
     const scan = params.scanlineStrength;
     const mask = params.phosphorMask;
+    const frameSeconds = frameIndex / fps;
+    const flickerWaveA = Math.sin(frameSeconds * Math.PI * 2 * 1.94) * 0.5 + 0.5;
+    const flickerWaveB = Math.sin(frameSeconds * Math.PI * 2 * 0.61 + 1.7) * 0.5 + 0.5;
+    const globalRefresh = 1 + params.flicker * (0.14 * (0.65 * flickerWaveA + 0.35 * flickerWaveB));
+    const retraceY = ((frameSeconds * 1.45) % 1) * height;
+    const retraceBand = Math.max(4, Math.floor(height * 0.014));
 
     for (let y = 0; y < height; y++) {
       const ny = (y / (height - 1)) * 2 - 1;
-      const scanPhase = Math.sin((y + 0.5) * Math.PI);
-      const scanlineGain = 1 - scan * (0.35 + 0.65 * (0.5 + 0.5 * scanPhase));
+      const scanPhase = 0.5 + 0.5 * Math.cos((y + 0.5) * Math.PI);
+      const scanlineGain = 1 - scan * (0.3 + 0.7 * scanPhase);
+      const dyRetrace = (y - retraceY) / retraceBand;
+      const retraceGain = 1 + params.flicker * 0.2 * Math.exp(-(dyRetrace * dyRetrace));
 
       for (let x = 0; x < width; x++) {
         const nx = (x / (width - 1)) * 2 - 1;
@@ -148,16 +156,39 @@ class CRTRenderer {
         const green = this.sampleBilinear(srcData, width, height, gu, v, 1);
         const blue = this.sampleBilinear(srcData, width, height, bu, v, 2);
 
-        const triad = x % 3;
-        const boost = 1 + mask * 0.52;
-        const dim = 1 - mask * 0.32;
-        const rMask = triad === 0 ? boost : dim;
-        const gMask = triad === 1 ? boost : dim;
-        const bMask = triad === 2 ? boost : dim;
+        const luma = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+        const emissive = Math.max(0, (luma - 6) / 249);
+        if (emissive <= 0) {
+          dstData[outIndex] = 0;
+          dstData[outIndex + 1] = 0;
+          dstData[outIndex + 2] = 0;
+          dstData[outIndex + 3] = 255;
+          continue;
+        }
 
-        dstData[outIndex] = Math.min(255, red * scanlineGain * rMask);
-        dstData[outIndex + 1] = Math.min(255, green * scanlineGain * gMask);
-        dstData[outIndex + 2] = Math.min(255, blue * scanlineGain * bMask);
+        const cellX = (x + (y % 2) * 0.35) % 3;
+        const cellY = ((y + 0.5) % 2) - 0.5;
+        const sigmaX = 0.34 - mask * 0.1;
+        const sigmaY = 0.27 - mask * 0.08;
+        const spot = (center) => {
+          const dx = cellX - center;
+          return Math.exp(-((dx * dx) / (2 * sigmaX * sigmaX) + (cellY * cellY) / (2 * sigmaY * sigmaY)));
+        };
+
+        const baseGap = 0.015;
+        const rMask = baseGap + (0.32 + mask * 1.05) * spot(0.5);
+        const gMask = baseGap + (0.32 + mask * 1.05) * spot(1.5);
+        const bMask = baseGap + (0.32 + mask * 1.05) * spot(2.5);
+
+        const localFlutter = 1 + params.flicker * 0.1 * (seededNoise(x * 0.7, y * 1.3, frameIndex) - 0.5);
+        const temporalGain = scanlineGain * retraceGain * globalRefresh * localFlutter;
+
+        const grain = (seededNoise(x * 1.9, y * 1.4 + frameSeconds * 60, frameIndex) - 0.5) * 65 * params.noise;
+        const gate = Math.min(1, emissive * 1.35);
+
+        dstData[outIndex] = Math.min(255, Math.max(0, red * rMask * temporalGain + grain * gate));
+        dstData[outIndex + 1] = Math.min(255, Math.max(0, green * gMask * temporalGain + grain * gate));
+        dstData[outIndex + 2] = Math.min(255, Math.max(0, blue * bMask * temporalGain + grain * gate));
         dstData[outIndex + 3] = 255;
       }
     }
@@ -190,48 +221,12 @@ class CRTRenderer {
     outCtx.fillStyle = grad;
     outCtx.fillRect(0, 0, width, height);
 
-    const frameSeconds = frameIndex / fps;
-    const flickerWaveA = Math.sin(frameSeconds * Math.PI * 2 * 1.94) * 0.5 + 0.5;
-    const flickerWaveB = Math.sin(frameSeconds * Math.PI * 2 * 0.61 + 1.7) * 0.5 + 0.5;
-    const flicker = params.flicker * (0.4 + 0.6 * (0.65 * flickerWaveA + 0.35 * flickerWaveB));
-    outCtx.fillStyle = `rgba(255,255,255,${(flicker * 0.2).toFixed(3)})`;
-    outCtx.fillRect(0, 0, width, height);
-
-    const retraceY = ((frameSeconds * 1.45) % 1) * height;
-    const retraceBand = Math.max(6, Math.floor(height * 0.02));
-    const retraceGrad = outCtx.createLinearGradient(0, retraceY - retraceBand, 0, retraceY + retraceBand);
-    retraceGrad.addColorStop(0, "rgba(255,255,255,0)");
-    retraceGrad.addColorStop(0.5, `rgba(255,255,255,${(params.flicker * 0.12).toFixed(3)})`);
-    retraceGrad.addColorStop(1, "rgba(255,255,255,0)");
-    outCtx.fillStyle = retraceGrad;
-    outCtx.fillRect(0, retraceY - retraceBand, width, retraceBand * 2);
-
-    const jitterPx = params.flicker * (seededNoise(frameIndex, frameSeconds, 17) - 0.5) * 2.6;
+    const jitterPx = params.flicker * (seededNoise(frameIndex, seconds, 17) - 0.5) * 1.8;
     if (Math.abs(jitterPx) > 0.01) {
       outCtx.save();
-      outCtx.globalAlpha = Math.min(0.14, 0.05 + params.flicker * 0.12);
+      outCtx.globalAlpha = Math.min(0.1, 0.03 + params.flicker * 0.08);
       outCtx.drawImage(outCtx.canvas, jitterPx, 0);
       outCtx.restore();
-    }
-
-    if (params.noise > 0) {
-      const count = Math.floor(width * height * 0.008 * params.noise);
-      for (let i = 0; i < count; i++) {
-        const x = Math.floor(seededNoise(i, seconds, frameIndex) * width);
-        const y = Math.floor(seededNoise(i * 2, seconds + 3.1, frameIndex) * height);
-        const grain = seededNoise(x + frameIndex * 0.3, y, frameIndex);
-        const a = (0.02 + grain * 0.28) * params.noise;
-        outCtx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
-        outCtx.fillRect(x, y, 1, 1);
-      }
-
-      const burst = seededNoise(frameIndex, frameSeconds * 10, 91);
-      if (burst > 0.91) {
-        const bandY = Math.floor(seededNoise(frameIndex, burst, 37) * height);
-        const bandH = Math.max(3, Math.floor(height * 0.012));
-        outCtx.fillStyle = `rgba(255,255,255,${(params.noise * 0.22).toFixed(3)})`;
-        outCtx.fillRect(0, bandY, width, bandH);
-      }
     }
   }
 }
