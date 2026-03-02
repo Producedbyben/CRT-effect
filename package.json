@@ -1,0 +1,10 @@
+{
+  "name": "crt-effect",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start:ui": "python -m http.server 8080",
+    "start:api": "node server/api.js"
+  }
+}

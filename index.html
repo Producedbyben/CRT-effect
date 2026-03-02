@@ -7,38 +7,67 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main class="app">
-      <section class="controls">
-        <h1>CRT Effect Renderer</h1>
-        <label class="file-input">
-          <span>Image source</span>
-          <input id="imageInput" type="file" accept="image/*" />
-        </label>
+    <main class="workspace">
+      <header class="topbar">
+        <h1 id="routeTitle">New Project</h1>
+        <nav>
+          <a href="#/new-project">New Project</a>
+          <a href="#/crt-lab">CRT Lab</a>
+        </nav>
+      </header>
 
-        <label>Preset
-          <select id="presetSelect"></select>
-        </label>
-
-        <label>Scanline strength <input id="scanlineStrength" type="range" min="0" max="1" step="0.01" value="0.35" /></label>
-        <label>Phosphor mask <input id="phosphorMask" type="range" min="0" max="1" step="0.01" value="0.4" /></label>
-        <label>Barrel distortion <input id="barrelDistortion" type="range" min="0" max="0.8" step="0.01" value="0.18" /></label>
-        <label>Bloom <input id="bloom" type="range" min="0" max="1" step="0.01" value="0.4" /></label>
-        <label>Flicker <input id="flicker" type="range" min="0" max="1" step="0.01" value="0.12" /></label>
-        <label>Chromatic aberration <input id="chromaticAberration" type="range" min="0" max="1" step="0.01" value="0.2" /></label>
-        <label>Noise <input id="noise" type="range" min="0" max="1" step="0.01" value="0.16" /></label>
-
-        <div class="row">
-          <label>FPS <input id="fps" type="number" value="60" min="12" max="120" /></label>
-          <label>Duration (s) <input id="duration" type="number" value="4" min="1" max="20" step="0.5" /></label>
+      <section id="newProjectScreen" class="screen">
+        <div class="controls">
+          <h2>Start a new edit</h2>
+          <form id="newProjectForm" class="project-form">
+            <label class="file-input">
+              <span>Source MP4</span>
+              <input id="projectVideoInput" type="file" accept="video/mp4" required />
+            </label>
+            <button type="submit">Create Project</button>
+          </form>
+          <p id="newProjectStatus" class="status">Upload a source MP4 to create a ProjectSession.</p>
         </div>
-
-        <button id="exportBtn">Export MP4</button>
-        <div id="status" class="status">Load an image to begin.</div>
-        <progress id="progress" max="1" value="0"></progress>
+        <div id="editorShell" class="preview shell-placeholder">
+          Editor shell will appear here after upload.
+        </div>
       </section>
 
-      <section class="preview">
-        <canvas id="previewCanvas" width="960" height="540"></canvas>
+      <section id="crtLabScreen" class="screen" hidden>
+        <section class="app">
+          <section class="controls">
+            <h2>CRT Effect Renderer</h2>
+            <label class="file-input">
+              <span>Image source</span>
+              <input id="imageInput" type="file" accept="image/*" />
+            </label>
+
+            <label>Preset
+              <select id="presetSelect"></select>
+            </label>
+
+            <label>Scanline strength <input id="scanlineStrength" type="range" min="0" max="1" step="0.01" value="0.35" /></label>
+            <label>Phosphor mask <input id="phosphorMask" type="range" min="0" max="1" step="0.01" value="0.4" /></label>
+            <label>Barrel distortion <input id="barrelDistortion" type="range" min="0" max="0.8" step="0.01" value="0.18" /></label>
+            <label>Bloom <input id="bloom" type="range" min="0" max="1" step="0.01" value="0.4" /></label>
+            <label>Flicker <input id="flicker" type="range" min="0" max="1" step="0.01" value="0.12" /></label>
+            <label>Chromatic aberration <input id="chromaticAberration" type="range" min="0" max="1" step="0.01" value="0.2" /></label>
+            <label>Noise <input id="noise" type="range" min="0" max="1" step="0.01" value="0.16" /></label>
+
+            <div class="row">
+              <label>FPS <input id="fps" type="number" value="60" min="12" max="120" /></label>
+              <label>Duration (s) <input id="duration" type="number" value="4" min="1" max="20" step="0.5" /></label>
+            </div>
+
+            <button id="exportBtn">Export MP4</button>
+            <div id="status" class="status">Load an image to begin.</div>
+            <progress id="progress" max="1" value="0"></progress>
+          </section>
+
+          <section class="preview">
+            <canvas id="previewCanvas" width="960" height="540"></canvas>
+          </section>
+        </section>
       </section>
     </main>
 

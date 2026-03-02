@@ -9,10 +9,35 @@ body {
   color: #efefef;
 }
 
-.app {
-  display: grid;
-  grid-template-columns: 320px 1fr;
+.workspace {
   min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.topbar nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.topbar a {
+  color: #9ac7ff;
+}
+
+.screen {
+  min-height: calc(100vh - 68px);
+}
+
+.app,
+#newProjectScreen {
+  display: grid;
+  grid-template-columns: 340px 1fr;
 }
 
 .controls {
@@ -23,13 +48,20 @@ body {
   gap: 0.65rem;
 }
 
+.project-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
 label {
   display: grid;
   gap: 0.3rem;
   font-size: 0.9rem;
 }
 
-input, select, button {
+input,
+select,
+button {
   width: 100%;
 }
 
@@ -49,20 +81,34 @@ button {
   cursor: pointer;
 }
 
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .preview {
   display: grid;
   place-items: center;
   padding: 1rem;
 }
 
+.shell-placeholder {
+  align-content: start;
+  border-left: 1px solid #2a2a2a;
+}
+
+.editor-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  margin-top: 0.5rem;
+}
+
+.panel {
+  border: 1px dashed #3c3c3c;
+  border-radius: 8px;
+  padding: 0.75rem;
+  min-height: 70px;
+}
+
 canvas {
   max-width: 100%;
-  max-height: calc(100vh - 2rem);
+  max-height: calc(100vh - 6rem);
   border-radius: 8px;
   border: 1px solid #2f2f2f;
   background: black;
